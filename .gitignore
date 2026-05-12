@@ -1,0 +1,6 @@
+data/videos/
+data/csv/
+*.mp4
+*.avi
+*.mov
+result_detection.mp4
