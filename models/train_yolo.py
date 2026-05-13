@@ -1,22 +1,28 @@
-import os
-from pathlib import Path
 from ultralytics import YOLO
+from pathlib import Path
 
-# 1. Сначала определяем переменные путей
-project_root = Path(__file__).resolve().parent.parent
-data_yaml = project_root / "real_dataset" / "dataset.yaml"
+if __name__ == '__main__':
+    project_root = Path(__file__).resolve().parent.parent
+    data_yaml = project_root / "real_dataset" / "dataset.yaml"
 
-# 2. И только ПОТОМ запускаем обучение
-model = YOLO('yolov8s.pt')
-model.train(
-    data=str(data_yaml),  # Теперь переменная data_yaml определена
-    epochs=50,
-    imgsz=640,
-    batch=16,
-    device=0,
-    workers=0,
-    amp=True,
-    patience=10,
-    augment=True,
-    name='price_tag_detector'
-)
+    if not data_yaml.exists():
+        raise FileNotFoundError(f"Датасет не найден: {data_yaml}")
+
+    model = YOLO('yolov8s.pt')
+    model.train(
+        data=str(data_yaml),
+        epochs=50,
+        imgsz=640,
+        batch=8,
+        workers=0,          # Windows fix
+        cache=True,
+        degrees=0,          # без поворота
+        scale=0.1,
+        perspective=0.0005,
+        mosaic=0.2,
+        mixup=0.0,
+        copy_paste=0.0,
+        patience=10,
+        name='price_tag_detector'
+    )
+    model.export(format='onnx')

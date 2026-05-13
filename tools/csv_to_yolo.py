@@ -1,16 +1,17 @@
 import pandas as pd
 import cv2
-import random
-import shutil
+import numpy as np
 from pathlib import Path
 from tqdm import tqdm
+import shutil
+import random
 
 def process_all_data(csv_root, videos_root, output_dir, train_ratio=0.8):
     csv_root = Path(csv_root).resolve()
     videos_root = Path(videos_root).resolve()
     output_path = Path(output_dir).resolve()
 
-    # Абсолютные временные папки
+    # Временные папки для всех кадров (абсолютные пути)
     tmp_images = output_path / "images_all"
     tmp_labels = output_path / "labels_all"
     tmp_images.mkdir(parents=True, exist_ok=True)
@@ -20,11 +21,9 @@ def process_all_data(csv_root, videos_root, output_dir, train_ratio=0.8):
     if not csv_files:
         raise FileNotFoundError(f"В папке {csv_root} нет CSV-файлов")
 
-    any_video_processed = False
-
     for csv_path in csv_files:
         print(f"\n=== Обработка {csv_path.name} ===")
-        # Ищем видео с именем как у CSV (без расширения)
+        # Ищем видео с таким же именем, как у CSV (без расширения)
         video_path = None
         for ext in ['.mp4', '.avi', '.mov', '.MP4', '.AVI', '.MOV']:
             candidate = videos_root / f"{csv_path.stem}{ext}"
@@ -54,13 +53,14 @@ def process_all_data(csv_root, videos_root, output_dir, train_ratio=0.8):
             fps = 25.0
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        grouped = df.groupby('frame_timestamp')
-        processed = 0
+        # Группируем по реальному номеру кадра, а не по сырому timestamp
+        df['frame_number'] = (df['frame_timestamp'] / 1000.0 * fps).round().astype(int)
+        grouped = df.groupby('frame_number')
 
-        for ts, group in tqdm(grouped, desc=f"Извлечение кадров {csv_path.name}"):
-            ts = float(ts)
-            frame_number = int(round((ts / 1000.0) * fps))
-            frame_number = max(0, min(frame_number, total_frames - 1))
+        processed = 0
+        for frame_number, group in tqdm(grouped, desc=f"Извлечение кадров {csv_path.name}"):
+            if frame_number < 0 or frame_number >= total_frames:
+                continue
 
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
             ret, frame = cap.read()
@@ -68,16 +68,16 @@ def process_all_data(csv_root, videos_root, output_dir, train_ratio=0.8):
                 continue
 
             h, w = frame.shape[:2]
-            file_id = f"{video_path.stem}_ts{int(ts)}"
+            file_id = f"{video_path.stem}_frame{frame_number}"
 
-            # Путь к изображению (абсолютный)
+            # Сохраняем изображение (используем imencode для совместимости с кириллицей)
             img_name = f"{file_id}.jpg"
             img_path = tmp_images / img_name
-            success = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 95])[1]
+            _, encoded = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
             with open(img_path, 'wb') as f:
-                f.write(success.tobytes())
+                f.write(encoded.tobytes())
 
-            # Путь к разметке
+            # Сохраняем разметку YOLO
             label_path = tmp_labels / f"{file_id}.txt"
             with open(label_path, 'w') as f:
                 for _, row in group.iterrows():
@@ -86,6 +86,7 @@ def process_all_data(csv_root, videos_root, output_dir, train_ratio=0.8):
                                            float(row['x_max']), float(row['y_max']))
                         if x1 >= x2 or y1 >= y2:
                             continue
+                        # Приводим к границам изображения
                         x1 = max(0, min(x1, w - 1))
                         x2 = max(0, min(x2, w - 1))
                         y1 = max(0, min(y1, h - 1))
@@ -103,28 +104,23 @@ def process_all_data(csv_root, videos_root, output_dir, train_ratio=0.8):
 
         cap.release()
         print(f"Сохранено {processed} кадров из {csv_path.name}")
-        if processed > 0:
-            any_video_processed = True
 
-    # Проверяем, что накопилось
-    all_images = list(tmp_images.glob("*.jpg"))
-    print(f"\nВременная папка (абсолютный путь): {tmp_images}")
-    print(f"Найдено изображений: {len(all_images)}")
-
+    # Разделение по видео (без случайного перемешивания)
+    all_images = sorted(tmp_images.glob("*.jpg"))
     if not all_images:
-        if any_video_processed:
-            print("Предупреждение: хотя кадры сохранялись, временная папка пуста – несовпадение путей.")
-        else:
-            print("Ни одного видео не обработано. Проверьте CSV и видео.")
+        print("Не найдено ни одного кадра. Проверьте CSV и видео.")
         return
 
-    random.seed(42)
-    random.shuffle(all_images)
-    split_idx = int(len(all_images) * train_ratio)
-    train_files = all_images[:split_idx]
-    val_files = all_images[split_idx:]
+    # Выделим уникальные префиксы видео (stem без суффикса _frame...)
+    video_stems = sorted(set(p.stem.split('_frame')[0] for p in all_images))
+    print(f"Найдено видео: {video_stems}")
 
-    # Целевые папки
+    # Используем первое видео для val, остальные для train (или можно задать своё правило)
+    val_video = video_stems[0]
+    train_files = [p for p in all_images if p.stem.startswith(val_video) is False]
+    val_files = [p for p in all_images if p.stem.startswith(val_video)]
+
+    # Если нужно строго соблюсти train_ratio, можно перемешать внутри видео, но мы оставляем по видео
     train_img_dir = output_path / "images" / "train"
     val_img_dir = output_path / "images" / "val"
     train_lbl_dir = output_path / "labels" / "train"
@@ -168,8 +164,8 @@ def process_all_data(csv_root, videos_root, output_dir, train_ratio=0.8):
     print(f"Конфиг: {yaml_path}")
 
 if __name__ == "__main__":
-    current_dir = Path(__file__).resolve().parent  # папка tools
-    project_root = current_dir.parent              # корень проекта
+    current_dir = Path(__file__).resolve().parent
+    project_root = current_dir.parent
 
     csv_dir = project_root / "data" / "csv"
     videos_dir = project_root / "data" / "videos"

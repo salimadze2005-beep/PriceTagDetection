@@ -1,17 +1,17 @@
 task: detect
 mode: train
 model: yolov8s.pt
-data: real_dataset/dataset.yaml
+data: C:\Users\Xeon\PycharmProjects\LentaHack\real_dataset\dataset.yaml
 epochs: 50
 time: null
 patience: 10
-batch: 16
+batch: 8
 imgsz: 640
 save: true
 save_period: -1
-cache: false
-device: cpu
-workers: 8
+cache: true
+device: null
+workers: 0
 project: null
 name: price_tag_detector
 exist_ok: false
@@ -48,7 +48,7 @@ source: null
 vid_stride: 1
 stream_buffer: false
 visualize: false
-augment: true
+augment: false
 agnostic_nms: false
 classes: null
 retina_masks: false
@@ -90,15 +90,15 @@ nbs: 64
 hsv_h: 0.015
 hsv_s: 0.7
 hsv_v: 0.4
-degrees: 0.0
+degrees: 3
 translate: 0.1
-scale: 0.5
+scale: 0.1
 shear: 0.0
-perspective: 0.0
+perspective: 0.0005
 flipud: 0.0
 fliplr: 0.5
 bgr: 0.0
-mosaic: 1.0
+mosaic: 0.2
 mixup: 0.0
 cutmix: 0.0
 copy_paste: 0.0
@@ -107,4 +107,4 @@ auto_augment: randaugment
 erasing: 0.4
 cfg: null
 tracker: botsort.yaml
-save_dir: C:\Users\Xeon\PycharmProjects\Распознавание ценников\models\runs\detect\price_tag_detector
+save_dir: C:\Users\Xeon\PycharmProjects\LentaHack\models\runs\detect\price_tag_detector
