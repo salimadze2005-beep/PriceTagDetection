@@ -1,36 +1,61 @@
-import pytesseract
-import re
+import easyocr
 import cv2
-import numpy as np
-
-# Путь к tesseract.exe – подкорректируй, если ставил в другое место
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+import re
 
 class OCRReader:
+
     def __init__(self):
-        self.config = '--psm 6 -l rus+eng'  # режим: uniform block of text, русский+английский
 
-    def read(self, image):
-        """Возвращает весь текст с изображения одной строкой."""
-        if image is None or image.size == 0:
-            return ""
-        # Предобработка: бинаризация для улучшения OCR
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        text = pytesseract.image_to_string(thresh, config=self.config)
-        return ' '.join(text.split())
+        self.reader = easyocr.Reader(
+            ['en', 'ru'],
+            gpu=True
+        )
 
-    def read_id_sku(self, image):
-        text = self.read(image)
-        matches = re.findall(r'\b\d{9,15}\b', text)
-        return matches[0] if matches else None
+    def preprocess(self, image):
 
-    def read_barcode(self, image):
-        text = self.read(image)
-        matches = re.findall(r'\b\d{12,14}\b', text)
-        return matches[0] if matches else None
+        gray = cv2.cvtColor(
+            image,
+            cv2.COLOR_BGR2GRAY
+        )
 
-    def read_price(self, image):
-        text = self.read(image)
-        m = re.search(r'(\d+)[,.](\d{2})', text)
-        return float(f"{m.group(1)}.{m.group(2)}") if m else None
+        gray = cv2.resize(
+            gray,
+            None,
+            fx=2,
+            fy=2
+        )
+
+        gray = cv2.GaussianBlur(
+            gray,
+            (3,3),
+            0
+        )
+
+        _, thresh = cv2.threshold(
+            gray,
+            0,
+            255,
+            cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+
+        return thresh
+
+    def read_text(self, image):
+
+        prep = self.preprocess(image)
+
+        result = self.reader.readtext(
+            prep,
+            detail=0,
+            paragraph=False
+        )
+
+        return " ".join(result)
+
+    def read_digits(self, image):
+
+        text = self.read_text(image)
+
+        digits = re.findall(r'\d+', text)
+
+        return ''.join(digits)

@@ -1,0 +1,13 @@
+[33m4b6a938[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m HEAD@{0}: commit: Добавлены все модули: исправленный aligner, разметка ROI, генератор field synth, конвертер координат
+[33m7dc2996[m HEAD@{1}: commit (cherry-pick): Final push with all modules and ROI config
+[33m300e862[m HEAD@{2}: reset: moving to origin/main
+[33md16725b[m HEAD@{3}: rebase (abort): returning to refs/heads/main
+[33md16725b[m HEAD@{4}: rebase (abort): returning to refs/heads/main
+[33m09428d5[m HEAD@{5}: commit: Final push with all modules and ROI config
+[33md16725b[m HEAD@{6}: checkout: moving from 300e862425778ebdd63d4db6a0a97362f3ca16de to main
+[33m300e862[m HEAD@{7}: pull origin main --rebase (start): checkout 300e862425778ebdd63d4db6a0a97362f3ca16de
+[33md16725b[m HEAD@{8}: commit: бновлённый проект: исправленный aligner, ручная разметка ROI, генератор field synth
+[33mb9f42f6[m HEAD@{9}: commit: обавлен requirements.txt
+[33m4e5e895[m HEAD@{10}: commit: олный пайплайн, все модули написаны, ожидает настройки ROI
+[33m04e77e4[m HEAD@{11}: Branch: renamed refs/heads/master to refs/heads/main
+[33m04e77e4[m HEAD@{13}: commit (initial): Initial commit with .gitignore

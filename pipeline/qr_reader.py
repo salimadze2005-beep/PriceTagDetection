@@ -1,36 +1,65 @@
 from pyzbar.pyzbar import decode
 import cv2
-import re
+import numpy as np
+
 
 class QRReader:
+    def __init__(self):
+        pass
+
+    def preprocess_versions(self, image):
+        versions = []
+
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+        versions.append(gray)
+
+        clahe = cv2.createCLAHE(
+            clipLimit=2.0,
+            tileGridSize=(8, 8)
+        )
+
+        enhanced = clahe.apply(gray)
+
+        versions.append(enhanced)
+
+        thresh = cv2.adaptiveThreshold(
+            enhanced,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            31,
+            5
+        )
+
+        versions.append(thresh)
+
+        sharpen_kernel = np.array([
+            [0, -1, 0],
+            [-1, 5, -1],
+            [0, -1, 0]
+        ])
+
+        sharp = cv2.filter2D(
+            enhanced,
+            -1,
+            sharpen_kernel
+        )
+
+        versions.append(sharp)
+
+        return versions
+
     def read(self, image):
-        """Возвращает словарь данных QR. Поддерживает разные форматы."""
-        if image is None: return {}
-        # Прямое чтение
-        decoded = decode(image)
-        if not decoded:
-            # Попытка с бинаризацией
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            decoded = decode(thresh)
-        if not decoded:
-            return {}
+        versions = self.preprocess_versions(image)
 
-        data = decoded[0].data.decode('utf-8').strip()
-        return self._parse(data)
+        for img in versions:
+            decoded = decode(img)
 
-    def _parse(self, qr_str):
-        """Парсит строку QR в словарь."""
-        result = {}
-        # Попытка & или ; как разделители
-        pairs = re.split(r'[&;\n]', qr_str)
-        for pair in pairs:
-            if '=' in pair:
-                k, v = pair.split('=', 1)
-                result[k.strip()] = v.strip()
-            elif pair.strip().isdigit() and len(pair.strip()) == 13:
-                result['barcode'] = pair.strip()
-        # Если ничего не нашли, сохраняем как сырую строку
-        if not result:
-            result['raw'] = qr_str
-        return result
+            if decoded:
+                try:
+                    return decoded[0].data.decode('utf-8')
+                except:
+                    pass
+
+        return None

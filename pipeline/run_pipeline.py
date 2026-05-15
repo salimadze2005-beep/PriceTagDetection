@@ -1,7 +1,9 @@
+# run_pipeline.py
+
 import cv2
 import pandas as pd
+
 from pathlib import Path
-from tqdm import tqdm
 from ultralytics import YOLO
 
 from pipeline.aligner import PriceTagAligner
@@ -10,107 +12,404 @@ from pipeline.roi_extractor import ROIExtractor
 from pipeline.ocr_reader import OCRReader
 from pipeline.qr_reader import QRReader
 from pipeline.validator import Validator
-from pipeline.temporal_fusion import TemporalFusion
-from pipeline.iou_tracker import IoUTracker
+from pipeline.best_frame_selector import BestFrameSelector
 
-def process_video(video_path, output_dir="results",
-                  detector_path="models/runs/detect/price_tag_detector/weights/best.pt",
-                  roi_config="config/roi_templates.json"):
-    cap = cv2.VideoCapture(str(video_path))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_interval = int(fps * 2)  # каждые 2 секунды
-    detector = YOLO(detector_path)
+
+BASE_DIR = Path(__file__).resolve().parent
+
+MODEL_PATH = (
+    BASE_DIR
+    / 'models'
+    / 'runs'
+    / 'detect'
+    / 'price_tag_detector'
+    / 'weights'
+    / 'best.pt'
+)
+
+VIDEO_PATH = (
+    BASE_DIR
+    / 'data'
+    / 'videos'
+    / '26_12-20.mp4'
+)
+
+ROI_CONFIG = (
+    BASE_DIR
+    / 'config'
+    / 'roi_templates.json'
+)
+
+OUTPUT_CSV = (
+    BASE_DIR
+    / 'results.csv'
+)
+
+
+def preprocess_barcode_roi(image):
+
+    versions = []
+
+    gray = cv2.cvtColor(
+        image,
+        cv2.COLOR_BGR2GRAY
+    )
+
+    versions.append(gray)
+
+    clahe = cv2.createCLAHE(
+        clipLimit=2.0,
+        tileGridSize=(8, 8)
+    )
+
+    enhanced = clahe.apply(gray)
+
+    versions.append(enhanced)
+
+    adaptive = cv2.adaptiveThreshold(
+        enhanced,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        31,
+        5
+    )
+
+    versions.append(adaptive)
+
+    sharpen_kernel = [
+        [0, -1, 0],
+        [-1, 5, -1],
+        [0, -1, 0]
+    ]
+
+    sharpened = cv2.filter2D(
+        enhanced,
+        -1,
+        sharpen_kernel
+    )
+
+    versions.append(sharpened)
+
+    return versions
+
+
+def main():
+
+    if not MODEL_PATH.exists():
+
+        raise FileNotFoundError(
+            f'Не найдена модель: {MODEL_PATH}'
+        )
+
+    if not VIDEO_PATH.exists():
+
+        raise FileNotFoundError(
+            f'Не найдено видео: {VIDEO_PATH}'
+        )
+
+    print('Загрузка модели...')
+
+    model = YOLO(str(MODEL_PATH))
+
+    print('Инициализация модулей...')
+
     aligner = PriceTagAligner()
-    classifier = TemplateClassifier()
-    extractor = ROIExtractor(roi_config)
-    ocr = OCRReader()
-    qr_reader = QRReader()
-    validator = Validator()
-    fusion = TemporalFusion()
-    tracker = IoUTracker()
 
-    results = []
-    frame_idx = 0
+    classifier = TemplateClassifier()
+
+    extractor = ROIExtractor(
+        ROI_CONFIG
+    )
+
+    ocr = OCRReader()
+
+    qr_reader = QRReader()
+
+    validator = Validator()
+
+    selector = BestFrameSelector()
+
+    print('Открытие видео...')
+
+    cap = cv2.VideoCapture(
+        str(VIDEO_PATH)
+    )
+
+    if not cap.isOpened():
+
+        raise RuntimeError(
+            'Не удалось открыть видео'
+        )
+
+    fps = cap.get(
+        cv2.CAP_PROP_FPS
+    )
+
+    total_frames = int(
+        cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    )
+
+    print(
+        f'FPS: {fps}'
+    )
+
+    print(
+        f'Frames: {total_frames}'
+    )
+
+    frame_id = 0
+
     while True:
+
         ret, frame = cap.read()
+
         if not ret:
             break
-        if frame_idx % frame_interval == 0:
-            detections = detector(frame, conf=0.15, verbose=False)
-            boxes = []
-            for box in detections[0].boxes:
-                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                boxes.append((x1, y1, x2, y2))
 
-            # Трекинг
-            tracks = tracker.update(boxes)
+        print(
+            f'Frame {frame_id}/{total_frames}',
+            end='\r'
+        )
 
-            for track_id, bbox in tracks.items():
-                x1, y1, x2, y2 = bbox
-                crop = frame[y1:y2, x1:x2]
-                if crop.size == 0:
-                    continue
-                # Выравнивание
-                aligned = aligner.align(crop)
-                # Классификация формата
-                template = classifier.predict(aligned)
-                # Извлечение ROI
-                rois = extractor.extract_rois(aligned, template)
-                qr_zone = extractor.get_qr_zone(aligned, template)
+        results = model.track(
+            frame,
 
-                # OCR
-                data = {}
-                data['product_name'] = ocr.read(rois.get('product_name'))
-                data['price_default'] = ocr.read_price(rois.get('price_default'))
-                data['price_card'] = ocr.read_price(rois.get('price_card'))
-                data['price_discount'] = ocr.read_price(rois.get('price_discount'))
-                data['id_sku'] = ocr.read_id_sku(rois.get('id_sku'))
-                data['barcode'] = ocr.read_barcode(rois.get('barcode'))
-                data['discount_amount'] = ocr.read(rois.get('discount_amount'))
-                data['print_datetime'] = ocr.read(rois.get('print_datetime'))
-                data['code'] = ocr.read(rois.get('code'))
-                data['additional_info'] = ocr.read(rois.get('additional_info'))
-                data['special_symbols'] = ocr.read(rois.get('special_symbols'))
+            conf=0.15,
 
-                # QR
-                qr_data = qr_reader.read(qr_zone)
-                data.update(qr_data)  # добавляет поля, например qr_code_barcode
+            persist=True,
 
-                # Валидация
-                data = validator.validate(data)
+            tracker='bytetrack.yaml',
 
-                # Добавляем координаты и время
-                timestamp_ms = (frame_idx / fps) * 1000
-                data['filename'] = video_path.name
-                data['frame_timestamp'] = timestamp_ms
-                data['x_min'], data['y_min'], data['x_max'], data['y_max'] = x1, y1, x2, y2
+            verbose=False
+        )
 
-                # Сохраняем наблюдение в temporal fusion
-                fusion.add(track_id, data)
+        boxes = results[0].boxes
 
-            # Удаляем потерянные треки и записываем результат
-            lost_tracks = [tid for tid, t in tracker.tracks.items() if t['lost'] > tracker.max_lost]
-            for tid in lost_tracks:
-                if tid in fusion.tracks:
-                    fused_data = fusion.fuse(tid)
-                    if fused_data:
-                        results.append(fused_data)
-                    del fusion.tracks[tid]
+        if boxes.id is None:
 
-        frame_idx += 1
+            frame_id += 1
+
+            continue
+
+        for box, track_id in zip(
+            boxes,
+            boxes.id
+        ):
+
+            track_id = int(
+                track_id.item()
+            )
+
+            x1, y1, x2, y2 = map(
+                int,
+                box.xyxy[0]
+            )
+
+            x1 = max(0, x1)
+            y1 = max(0, y1)
+
+            x2 = min(
+                frame.shape[1],
+                x2
+            )
+
+            y2 = min(
+                frame.shape[0],
+                y2
+            )
+
+            crop = frame[
+                y1:y2,
+                x1:x2
+            ]
+
+            if crop.size == 0:
+                continue
+
+            aligned = aligner.align(
+                crop
+            )
+
+            if aligned is None:
+                continue
+
+            if aligned.size == 0:
+                continue
+
+            template_name = (
+                classifier.predict(
+                    aligned
+                )
+            )
+
+            rois = extractor.extract_rois(
+                aligned,
+                template_name
+            )
+
+            result = {
+
+                'filename': VIDEO_PATH.name,
+
+                'barcode': None,
+
+                'qr_code_barcode': None,
+
+                'id_sku': None,
+
+                'price_default': None,
+
+                'price_card': None
+            }
+
+            # BARCODE
+
+            if 'barcode' in rois:
+
+                barcode_roi = rois['barcode']
+
+                barcode_value = None
+
+                processed_versions = (
+                    preprocess_barcode_roi(
+                        barcode_roi
+                    )
+                )
+
+                for processed in processed_versions:
+
+                    temp_roi = cv2.cvtColor(
+                        processed,
+                        cv2.COLOR_GRAY2BGR
+                    )
+
+                    barcode_value = (
+                        ocr.read_barcode(
+                            temp_roi
+                        )
+                    )
+
+                    if barcode_value:
+                        break
+
+                result['barcode'] = (
+                    barcode_value
+                )
+
+            # ID SKU
+
+            if 'id_sku' in rois:
+
+                result['id_sku'] = (
+                    ocr.read_id_sku(
+                        rois['id_sku']
+                    )
+                )
+
+            # PRICE DEFAULT
+
+            if 'price_default' in rois:
+
+                result['price_default'] = (
+                    ocr.read(
+                        rois['price_default']
+                    )
+                )
+
+            # PRICE CARD
+
+            if 'price_card' in rois:
+
+                result['price_card'] = (
+                    ocr.read(
+                        rois['price_card']
+                    )
+                )
+
+            # QR
+
+            if 'qr' in rois:
+
+                qr_result = qr_reader.read(
+                    rois['qr']
+                )
+
+                if (
+                    'barcode'
+                    in qr_result
+                ):
+
+                    result[
+                        'qr_code_barcode'
+                    ] = (
+                        qr_result['barcode']
+                    )
+
+            # VALIDATION
+
+            result = validator.validate(
+                result
+            )
+
+            # TIMESTAMP
+
+            timestamp = int(
+                (frame_id / fps) * 1000
+            )
+
+            # BEST FRAME SELECTION
+
+            selector.update(
+
+                track_id=track_id,
+
+                image=aligned,
+
+                result=result,
+
+                timestamp=timestamp,
+
+                bbox=(
+                    x1,
+                    y1,
+                    x2,
+                    y2
+                )
+            )
+
+        frame_id += 1
 
     cap.release()
-    # Сохраняем CSV
-    if results:
-        df = pd.DataFrame(results)
-        output_path = Path(output_dir) / f"{video_path.stem}_results.csv"
-        df.to_csv(output_path, index=False, quoting=1)  # QUOTE_ALL
-        return output_path
-    return None
 
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) < 2:
-        print("Usage: python run_pipeline.py <video_path>")
-    else:
-        process_video(Path(sys.argv[1]))
+    print('\nЭкспорт результатов...')
+
+    final_results = (
+        selector.export_results()
+    )
+
+    df = pd.DataFrame(
+        final_results
+    )
+
+    df.to_csv(
+
+        OUTPUT_CSV,
+
+        index=False,
+
+        encoding='utf-8'
+    )
+
+    print(
+        f'CSV сохранён: {OUTPUT_CSV}'
+    )
+
+    print(
+        f'Всего строк: {len(df)}'
+    )
+
+
+if __name__ == '__main__':
+
+    main()
