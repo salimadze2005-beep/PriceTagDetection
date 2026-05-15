@@ -3,4 +3,13 @@ data/csv/
 *.mp4
 *.avi
 *.mov
+<<<<<<< HEAD
 result_detection.mp4
+=======
+result_detection.mp4
+.env
+real_dataset
+field_synth
+synthetic_crops
+pipeline/field_synth
+>>>>>>> 09428d5 (Final push with all modules and ROI config)
