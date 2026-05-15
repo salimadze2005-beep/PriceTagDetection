@@ -1,0 +1,62 @@
+from pathlib import Path
+from sahi import AutoDetectionModel
+from sahi.predict import get_sliced_prediction
+import cv2
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent  # корень LentaHack
+MODEL_PATH = BASE_DIR / "models" / "runs" / "detect" / "price_tag_detector-5" / "weights" / "best.pt"
+VIDEO_PATH = BASE_DIR / "data" / "videos" / "49_5.mp4"
+OUTPUT_VIDEO = BASE_DIR / "data" / "videos" / "result_sahi.mp4"
+
+if not MODEL_PATH.exists():
+    print(f"Модель не найдена: {MODEL_PATH}")
+    exit()
+
+# SAHI модель (обёртка над ultralytics)
+detector = AutoDetectionModel.from_pretrained(
+    model_type='ultralytics',
+    model_path=str(MODEL_PATH),
+    confidence_threshold=0.70,
+    device='cuda:0'
+)
+
+cap = cv2.VideoCapture(str(VIDEO_PATH))
+if not cap.isOpened():
+    print(f"Не удалось открыть видео: {VIDEO_PATH}")
+    exit()
+
+width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+fps = cap.get(cv2.CAP_PROP_FPS)
+
+fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+out = cv2.VideoWriter(str(OUTPUT_VIDEO), fourcc, fps, (width, height))
+
+print(f"Обработка {VIDEO_PATH.name} → {OUTPUT_VIDEO.name}")
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    result = get_sliced_prediction(
+        frame,
+        detector,
+        slice_height=640,
+        slice_width=640,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2
+    )
+
+    for pred in result.object_prediction_list:
+        bbox = pred.bbox
+        x1, y1, x2, y2 = int(bbox.minx), int(bbox.miny), int(bbox.maxx), int(bbox.maxy)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(frame, f"{pred.score.value:.2f}", (x1, y1 - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+    out.write(frame)
+
+cap.release()
+out.release()
+print(f"Готово. Видео сохранено в {OUTPUT_VIDEO}")
